@@ -2,6 +2,17 @@
   "enabled": true,
   "idle_threshold_seconds": 15,
   "prompt_timeout_seconds": 8,
-  "active_start": null,
-  "active_end": null
+
+  "max_touchid_attempts": 3,
+  "theater_intensity": "full",
+
+  "unlock_secret_salt": "PASTE_FROM_GEN_SECRET",
+  "unlock_secret_hash": "PASTE_FROM_GEN_SECRET",
+
+  "notify_endpoints": [
+    "https://ntfy.sh/YOUR_LONG_RANDOM_TOPIC_HERE"
+  ],
+
+  "location_logging": true,
+  "log_path": "~/.config/custos/attempts.log"
 }

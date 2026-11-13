@@ -7,6 +7,9 @@ sudo install -m 0755 custos /usr/local/bin/custos
 CFG="$HOME/.config/custos"
 mkdir -p "$CFG"
 [ -f "$CFG/config.json" ] || cp config.example.json "$CFG/config.json"
+if ! grep -q "PASTE_FROM_GEN_SECRET" "$CFG/config.json" 2>/dev/null; then :; else
+    echo "REMINDER: run scripts/gen-secret.sh and paste salt/hash into config.json"
+fi
 
 PLIST="$HOME/Library/LaunchAgents/com.zachrielforever.custos.plist"
 cp deploy/com.zachrielforever.custos.plist "$PLIST"

@@ -1,33 +1,53 @@
 # Custos
 
 Faceless macOS agent: after N seconds of idle, silently seals ALL input
-(keyboard, trackpad, mouse, external USB) until the owner's Touch ID.
-The screen stays live and nothing visibly changes; the first input attempt
-surfaces a biometric-only system prompt. No password fallback by design —
-the keyboard is sealed while the prompt is up.
+(keyboard, trackpad, mouse, external USB) behind an escalating verification
+theater. Running processes are untouched — builds keep building, logs keep
+rolling. Nothing visibly changes until input is attempted.
 
-Built for Apple T2 Macs as a "walk away mid-build" tamper seal. Pair with
-"Require password immediately" in Lock Screen settings for reboot coverage.
+## Escalation tiers
+1. Dimmed stern prompt: "Touch to Unlock" + owner's phone is pinged (ntfy).
+2. Desktop drops to a faux verification shell (sysadmin TTY aesthetic),
+   real-time station data, second phone alert.
+3. Silent red alarm: "forensic record synced, endpoints notified" — all
+   true statements; every tier fires a real push notification.
+4. The void: black screen, blinking underscore. Unlocks only on the
+   Custos secret (salted SHA-512), NOT the macOS password — a leaked
+   system password gains nothing here, and this secret grants nothing else.
+
+Tier 4 owner ritual: `ESC` (clear hidden buffer), type secret, `Return`.
+No feedback is displayed by design — the ritual is constant, so buffer
+state is never a guess: always clear first.
+
+Touch ID is asked a maximum of `max_touchid_attempts` (default 3) times,
+ever — the Secure Enclave's ~5-failure biometric lockout is unreachable
+by design.
 
 ## Setup
-1. `scripts/build.sh` then `scripts/install.sh`
-2. System Settings → Privacy & Security → grant **Accessibility** and
-   **Input Monitoring** to `/usr/local/bin/custos`
-3. System Settings → Lock Screen → "Require password immediately"
-4. Log out / log in (grants take effect on next launch)
+1. `scripts/gen-secret.sh` — paste salt/hash into `~/.config/custos/config.json`
+2. `scripts/build.sh` then `scripts/install.sh`
+3. Privacy & Security: grant **Accessibility**, **Input Monitoring**, and
+   (optionally) **Location** to `/usr/local/bin/custos`
+4. Lock Screen settings: "Require password immediately" (reboot coverage)
+5. Log out / log in
 
-## Configuration
-`~/.config/custos/config.json` — hot-reloads, no restart needed.
-- `idle_threshold_seconds`: 15 for strict, 60 default
-- `active_start`/`active_end`: limit protection to a time window; leave
-  null (recommended — always on, no vulnerable off-hours)
+## Notifications
+Set `notify_endpoints` to your ntfy topic(s): `https://ntfy.sh/<long-random-string>`.
+Subscribe to that topic on your phone. Topic names are effectively
+passwords — use `openssl rand -hex 16`. Every tier fires a real push;
+multiple endpoints keep "endpoints notified" literally true.
+
+## Logging
+JSONL at `~/.config/custos/attempts.log`: every seal, attempt, escalation,
+position snapshot (if enabled), and unlock — one structured record per
+event, jq-queryable. No biometric data exists outside the Secure Enclave;
+the OS never sees fingerprints. No imagery is ever captured.
 
 ## Escape hatch
-If Touch ID locks out (~5 failed attempts), the machine stays sealed.
-Escape is force shutdown (hold power) → reboot → Touch ID/password login
-wall. Unsaved work in sealed apps is lost; rely on autosave.
+Force shutdown (hold power) → reboot → macOS login wall. Same cost as any
+tampering; unsaved work is the only casualty.
 
 ## Layout
-- `Sources/` — Swift agent (event tap, idle poll, LocalAuthentication gate)
+- `Sources/` — engine, overlay skins, logger, notifier, locator
 - `deploy/` — launchd agent plist
-- `scripts/` — build and install
+- `scripts/` — build, install, secret generation
