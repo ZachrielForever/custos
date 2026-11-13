@@ -1,14 +1,28 @@
 import AppKit
 import Foundation
 
-// Faceless app: NSApplication with LSUIElement (no Dock icon), a run loop,
-// and the agent riding on it. The overlay needs an app context to draw.
-
 let app = NSApplication.shared
-app.setActivationPolicy(.accessory)   // programmatic LSUIElement equivalent
+app.setActivationPolicy(.accessory)
 
-let agent = Custos()
-Custos.activate(agent)
-agent.start()
+let args = CommandLine.arguments
+
+switch args.count > 1 ? args[1] : "" {
+case "setup":
+    Setup.launch(app: app)
+case "test":
+    let cfg = CustosConfig.load()
+    Notifier.ownerPing(tier: 1, detail: "Custos test notification — endpoint configured correctly",
+                       endpoints: cfg.notifyEndpoints)
+    print("test notification dispatched to \(cfg.notifyEndpoints.count) endpoint(s)")
+default:
+    // agent mode: what launchd runs
+    if Setup.needsInitialSetup() {
+        Setup.launch(app: app)
+    } else {
+        let agent = Custos()
+        Custos.activate(agent)
+        agent.start()
+    }
+}
 
 app.run()

@@ -24,12 +24,12 @@ ever — the Secure Enclave's ~5-failure biometric lockout is unreachable
 by design.
 
 ## Setup
-1. `scripts/gen-secret.sh` — paste salt/hash into `~/.config/custos/config.json`
-2. `scripts/build.sh` then `scripts/install.sh`
-3. Privacy & Security: grant **Accessibility**, **Input Monitoring**, and
-   (optionally) **Location** to `/usr/local/bin/custos`
-4. Lock Screen settings: "Require password immediately" (reboot coverage)
-5. Log out / log in
+Simplest path: after `scripts/install.sh` and logout/login, the setup
+window auto-opens on first launch (incomplete config detected). Or invoke
+any time: `/usr/local/bin/custos setup`. First run is open; every later
+run requires Touch ID — reconfiguration is owner-only.
+
+CLI extras: `custos test` fires a notification to verify your phone side.
 
 ## Notifications
 Set `notify_endpoints` to your ntfy topic(s): `https://ntfy.sh/<long-random-string>`.

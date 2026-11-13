@@ -192,6 +192,16 @@ final class Custos {
 
     // Falls to T4 after final Touch ID failure.
     private func riseTier4() {
+        // Guard: no configured secret means the void has no exit but the
+        // power button. Loop Touch ID instead of entering the void.
+        // Setup normally prevents this state from ever existing.
+        if config.unlockSecretHash == nil || config.unlockSecretHash!.hasPrefix("PASTE_") {
+            state = .t3
+            windowUp = false
+            promptTouchID()
+            return
+        }
+
         windowUp = true
         Log.event("tier_escalation", tier: 4, ["note": "restricted mode"])
         Notifier.ownerPing(tier: 4, detail: "Custos: Aegis entering restricted mode after repeated failed verification", endpoints: config.notifyEndpoints)
