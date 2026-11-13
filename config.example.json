@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "idle_threshold_seconds": 15,
+  "prompt_timeout_seconds": 8,
+  "active_start": null,
+  "active_end": null
+}
