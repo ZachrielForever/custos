@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 
 /// Fullscreen borderless overlay. Four skins, one window — pre-attempt it
 /// doesn't exist, first input summons it, and everything the snoop sees is
@@ -14,8 +15,7 @@ final class Overlay {
 
     func show() {
         guard window == nil else { return }
-        guard let screen = NSScreen.main, let fmt = screen.optimalFormat,
-              let rectFmt = screen.convertRect(toBacking: screen.frame) else { return }
+        guard let screen = NSScreen.main else { return }
 
         let w = NSWindow(contentRect: screen.frame,
                          styleMask: .borderless,
@@ -24,9 +24,10 @@ final class Overlay {
         w.level = .screenSaver + 1          // above nearly everything incl. Spotlight
         w.isOpaque = false
         w.backgroundColor = .clear
-        w.ignoresMouseEvents = false        // we eat clicks by existing on top;
+        w.ignoresMouseEvents = false        // tier curtains eat clicks by existing on top;
                                             // real suppression is the event tap
         w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        w.alphaValue = 1                    // fade-in state from a prior blur may linger
         w.orderFrontRegardless()
         window = w
 
@@ -34,7 +35,6 @@ final class Overlay {
         bg.material = .underWindowBackground
         bg.blendingMode = .behindWindow
         bg.state = .active
-        bg.tag = 100
         w.contentView = bg
     }
 
@@ -46,11 +46,39 @@ final class Overlay {
         textView = nil
     }
 
+    // MARK: - Privacy blur (cosmetic curtain; no auth, no tap)
+
+    /// Frosted glass over the live screen. Real-time behindWindow blur, so
+    /// no screen capture and no Screen Recording permission. Passes input
+    /// through — it is a curtain, not a shield. Fades in for civility.
+    func renderBlur() {
+        show()
+        guard let w = window, let bg = w.contentView else { return }
+        w.ignoresMouseEvents = true         // clicks reach the apps beneath
+        bg.subviews.forEach { $0.removeFromSuperview() }
+        (bg as? NSVisualEffectView)?.material = .fullScreenUI
+
+        let dim = NSView(frame: bg.bounds)
+        dim.wantsLayer = true
+        dim.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.18).cgColor
+        bg.addSubview(dim)
+
+        text = nil
+        textView = nil
+        w.alphaValue = 0
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.35
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            w.animator().alphaValue = 1
+        }
+    }
+
     // MARK: - Tier 1: dim + stern popup
 
     func renderTier1(msg: String) {
         show()
         guard let bg = window?.contentView else { return }
+        window?.ignoresMouseEvents = false   // restore click-eating after a blur
         bg.subviews.forEach { $0.removeFromSuperview() }
         (bg as? NSVisualEffectView)?.material = .hudWindow
 
@@ -72,6 +100,7 @@ final class Overlay {
     func renderTerminal(lines: [String], danger: Bool) {
         show()
         guard let bg = window?.contentView else { return }
+        window?.ignoresMouseEvents = false
         bg.subviews.forEach { $0.removeFromSuperview() }
         bg.wantsLayer = true
         bg.layer?.backgroundColor = NSColor.black.cgColor
@@ -84,7 +113,6 @@ final class Overlay {
         tv.textColor = danger ? NSColor.systemRed : NSColor.green
         tv.backgroundColor = .black
 
-        // Quadrant header: the "sysadmin vibe" data strip
         let header = lines.joined(separator: "\n")
         tv.string = header
 
@@ -106,12 +134,14 @@ final class Overlay {
     func renderVoid() {
         show()
         guard let bg = window?.contentView else { return }
+        window?.ignoresMouseEvents = false
         bg.subviews.forEach { $0.removeFromSuperview() }
         bg.wantsLayer = true
         bg.layer?.backgroundColor = NSColor.black.cgColor
 
         let tv = NSTextView(frame: bg.bounds.insetBy(dx: 24, dy: 24))
         tv.isEditable = false
+        tv.isSelectable = false
         tv.drawsBackground = false
         tv.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
         tv.textColor = .white

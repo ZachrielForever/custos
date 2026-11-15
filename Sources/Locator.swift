@@ -12,8 +12,9 @@ final class Locator: NSObject, CLLocationManagerDelegate {
     private var manager: CLLocationManager?
 
     static func snapshot(handler: @escaping (String?) -> Void) {
-        let status = CLLocationManager.authorizationStatus()
-        guard status == .authorizedWhenInUse || status == .authorizedAlways else {
+        let probe = CLLocationManager()
+        let status = probe.authorizationStatus
+        guard status == .authorized || status == .authorizedAlways else {
             handler(nil); return
         }
         let loc = Locator()

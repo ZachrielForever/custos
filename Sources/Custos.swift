@@ -6,7 +6,7 @@ import IOKit.pwr_mgt
 import LocalAuthentication
 
 final class Custos {
-    enum State { case watching, t1, t2, t3, t4 }
+    enum State { case watching, blurred, t1, t2, t3, t4 }
 
     private var state: State = .watching
     private var config = CustosConfig.load()
@@ -21,6 +21,7 @@ final class Custos {
     private var powerAssertion: IOPMAssertionID = 0
     private var promptTimer: Timer?
     private var tick: Timer?
+    private var blurTick: Timer?            // fast sub-tick while the curtain is up
     private let overlay = Overlay()
 
     // Tier 4 hidden credential buffer. ESC clears; Return submits.
@@ -57,13 +58,59 @@ final class Custos {
             guard config.isActiveNow() else { return }
             let idle = CGEventSource.secondsSinceLastEventType(
                 .combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
-            if idle >= Double(config.idleThresholdSeconds) &&
-               Date().timeIntervalSince(baselineReset) >= Double(config.idleThresholdSeconds) {
+            if idle >= config.totalIdle &&
+               Date().timeIntervalSince(baselineReset) >= config.totalIdle {
                 seal()
+            } else if config.blurEnabled, idle >= config.blurOnset {
+                enterBlur()
+            }
+        case .blurred:
+            if !config.isActiveNow() {
+                dismissBlur(logEvent: "outside_schedule_release")
+            } else if !config.blurEnabled {
+                // hot reload can pull the rug on the feature mid-curtain
+                dismissBlur(logEvent: "blur_disabled_by_config")
             }
         default:
             if !config.isActiveNow() { unseal(logEvent: "outside_schedule_release") }
         }
+    }
+
+    // MARK: - Privacy blur
+
+    private func enterBlur() {
+        guard state == .watching else { return }
+        state = .blurred
+        Log.event("blur_engaged", tier: 0)
+        overlay.renderBlur()
+        // Curtain dismissal wants sub-second reaction; the main tick is 1s.
+        blurTick = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+            self?.blurPoll()
+        }
+    }
+
+    private func blurPoll() {
+        guard state == .blurred else { blurTick?.invalidate(); blurTick = nil; return }
+        guard config.isActiveNow() else { return }   // main tick handles release
+        let idle = CGEventSource.secondsSinceLastEventType(
+            .combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+        if idle < config.blurOnset {
+            dismissBlur(logEvent: "blur_dismissed")
+            return
+        }
+        if idle >= config.totalIdle &&
+           Date().timeIntervalSince(baselineReset) >= config.totalIdle {
+            seal()
+        }
+    }
+
+    private func dismissBlur(logEvent: String) {
+        blurTick?.invalidate(); blurTick = nil
+        overlay.hide()
+        Log.event(logEvent, tier: 0)
+        // No baselineReset touch: interaction already reset the HID clock,
+        // and no auth happened here — the curtain owes nothing.
+        state = .watching
     }
 
     // MARK: - Seal / unseal
@@ -73,12 +120,15 @@ final class Custos {
         sessionID = Log.beginSeal(reason: "idle threshold reached")
         holdDisplayAwake()
         installTap()
-        // Silence: no visual change yet. First input summons the overlay.
+        // If the blur curtain is up, LEAVE it up: hiding it would reveal the
+        // screen pre-verification. First input repaints it into a tier
+        // curtain; the tap is the real suppression anyway.
     }
 
     private func unseal(logEvent: String) {
         Log.event(logEvent, tier: state == .watching ? 0 : tierNumber(), ["outcome": "unsealed"])
         promptTimer?.invalidate(); promptTimer = nil
+        blurTick?.invalidate(); blurTick = nil
         removeTap()
         overlay.hide()
         releaseDisplayAwake()
@@ -89,7 +139,7 @@ final class Custos {
     }
 
     private func tierNumber() -> Int {
-        switch state { case .t1: 1; case .t2: 2; case .t3: 3; case .t4: 4; case .watching: 0 }
+        switch state { case .t1: 1; case .t2: 2; case .t3: 3; case .t4: 4; default: 0 }
     }
 
     // MARK: - Input interpretation (all input dies here; tap forwards nothing)
@@ -286,10 +336,10 @@ final class Custos {
                                .scrollWheel] {
             mask |= (1 << UInt64(t.rawValue))
         }
-        guard let tap = CGEvent.tapCreate(postLocatedAt: .cghidEventTap,
+        guard let tap = CGEvent.tapCreate(tap: .cghidEventTap,
+                                          place: .headInsertEventTap,
                                           options: .defaultTap,
                                           eventsOfInterest: CGEventMask(mask),
-                                          placement: .headInsertEventTap,
                                           callback: custosTapCallback,
                                           userInfo: nil) else {
             NSLog("Custos: event tap refused — check Accessibility + Input Monitoring grants")
@@ -316,7 +366,7 @@ final class Custos {
 
     private func holdDisplayAwake() {
         guard powerAssertion == 0 else { return }
-        IOPMAssertionCreateWithName(kIOPMAssertionNoDisplaySleepString as CFString,
+        IOPMAssertionCreateWithName(kIOPMAssertionTypeNoDisplaySleep as CFString,
                                     IOPMAssertionLevel(kIOPMAssertionLevelOn),
                                     "Custos sealed" as CFString,
                                     &powerAssertion)
