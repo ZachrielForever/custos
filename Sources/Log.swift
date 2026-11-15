@@ -28,9 +28,16 @@ enum Log {
 
         let url = CustosConfig.load().logURL
         do {
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
-                                                    withIntermediateDirectories: true)
-            let line = (try JSONSerialization.data(withJSONObject: record)) 
+            let fm = FileManager.default
+            try fm.createDirectory(at: url.deletingLastPathComponent(),
+                                   withIntermediateDirectories: true)
+            if !fm.fileExists(atPath: url.path) {
+                guard fm.createFile(atPath: url.path, contents: nil) else {
+                    NSLog("Custos: cannot create log file at \(url.path)")
+                    return
+                }
+            }
+            let line = (try JSONSerialization.data(withJSONObject: record))
             let handle = try FileHandle(forWritingTo: url)
             defer { try? handle.close() }
             try handle.seekToEnd()
