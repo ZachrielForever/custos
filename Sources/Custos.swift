@@ -19,7 +19,6 @@ final class Custos {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var powerAssertion: IOPMAssertionID = 0
-    private var promptTimer: Timer?
     private var tick: Timer?
     private var blurTick: Timer?            // fast sub-tick while the curtain is up
     private let overlay = Overlay()
@@ -70,6 +69,15 @@ final class Custos {
             } else if !config.blurEnabled {
                 // hot reload can pull the rug on the feature mid-curtain
                 dismissBlur(logEvent: "blur_disabled_by_config")
+            } else {
+                let idle = CGEventSource.secondsSinceLastEventType(
+                    .combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+                if idle < config.blurOnset {
+                    dismissBlur(logEvent: "blur_dismissed")
+                } else if idle >= config.totalIdle &&
+                          Date().timeIntervalSince(baselineReset) >= config.totalIdle {
+                    seal()
+                }
             }
         default:
             if !config.isActiveNow() { unseal(logEvent: "outside_schedule_release") }
@@ -127,7 +135,6 @@ final class Custos {
 
     private func unseal(logEvent: String) {
         Log.event(logEvent, tier: state == .watching ? 0 : tierNumber(), ["outcome": "unsealed"])
-        promptTimer?.invalidate(); promptTimer = nil
         blurTick?.invalidate(); blurTick = nil
         removeTap()
         overlay.hide()
@@ -256,7 +263,6 @@ final class Custos {
         Log.event("tier_escalation", tier: 4, ["note": "restricted mode"])
         Notifier.ownerPing(tier: 4, detail: "Custos: Aegis entering restricted mode after repeated failed verification", endpoints: config.notifyEndpoints)
         snapLocationIntoLog(tier: 4)
-        promptTimer?.invalidate()
         overlay.renderVoid()
         // No timeout: T4 waits indefinitely. Owner ritual: ESC, type secret,
         // Return. Nobody else has the secret, and no visual confirms typing.
@@ -267,16 +273,12 @@ final class Custos {
     private func promptTouchID() {
         guard state != .t4, touchIDFails < config.maxTouchIDAttempts else { riseTier4(); return }
         let ctx = LAContext()
-        promptTimer?.invalidate()
-        promptTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(config.promptTimeoutSeconds),
-                                           repeats: false) { _ in ctx.invalidate() }
-        // VERIFY: sheet under our screenSaver-level overlay — may need to
-        // momentarily drop window level so the system sheet shows. First-run
-        // empirical; failure mode is benign (sheet hidden, tap still sealed).
+        // Sheet draws beneath our opaque T1 curtain — hidden by design.
+        // No timeout: the prompt persists until touched or unsealed,
+        // same indefinite posture as the T4 ritual.
         ctx.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics,
                            localizedReason: "Verify ownership") { [weak self] ok, _ in
             guard let self = self else { return }
-            self.promptTimer?.invalidate()
             DispatchQueue.main.async {
                 if ok {
                     Log.event("owner_verified", tier: self.tierNumber(), ["method": "touchid"])
@@ -353,7 +355,6 @@ final class Custos {
     }
 
     private func removeTap() {
-        promptTimer = nil
         if let src = runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetCurrent(), src, .commonModes)
             runLoopSource = nil
