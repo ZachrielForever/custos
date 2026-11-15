@@ -73,14 +73,21 @@ final class Overlay {
         }
     }
 
-    // MARK: - Tier 1: dim + stern popup
+    // MARK: - Tier 1: opaque curtain + stern popup
 
+    /// Opaque black hides the system biometric sheet that draws beneath
+    /// our window level. Touch ID needs no visible UI to accept a finger —
+    /// the sensor is hardware, the sheet is decoration.
     func renderTier1(msg: String) {
         show()
         guard let bg = window?.contentView else { return }
-        window?.ignoresMouseEvents = false   // restore click-eating after a blur
+        window?.ignoresMouseEvents = false
         bg.subviews.forEach { $0.removeFromSuperview() }
-        (bg as? NSVisualEffectView)?.material = .hudWindow
+
+        let black = NSView(frame: bg.bounds)
+        black.wantsLayer = true
+        black.layer?.backgroundColor = NSColor.black.cgColor
+        bg.addSubview(black)
 
         let label = NSTextField(labelWithString: msg)
         label.alignment = .center
