@@ -16,6 +16,7 @@ final class Custos {
     private var baselineReset = Date.distantPast
 
     private var touchIDFails = 0
+    private var biometricsDown = false   // SE lockout seen this cycle
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var powerAssertion: IOPMAssertionID = 0
@@ -140,6 +141,7 @@ final class Custos {
         overlay.hide()
         releaseDisplayAwake()
         touchIDFails = 0
+        biometricsDown = false
         secretBuffer = ""
         baselineReset = Date()
         state = .watching
@@ -250,12 +252,13 @@ final class Custos {
     // Falls to T4 after final Touch ID failure.
     private func riseTier4() {
         // Guard: no configured secret means the void has no exit but the
-        // power button. Loop Touch ID instead of entering the void.
-        // Setup normally prevents this state from ever existing.
+        // power button. Loop Touch ID instead of entering the void — unless
+        // biometrics are dead, in which case re-prompting would recurse
+        // forever. Setup normally prevents this state from ever existing.
         if config.unlockSecretHash == nil || config.unlockSecretHash!.hasPrefix("PASTE_") {
             state = .t3
             windowUp = false
-            promptTouchID()
+            if !biometricsDown { promptTouchID() }
             return
         }
 
@@ -271,29 +274,55 @@ final class Custos {
     // MARK: - Touch ID / secret verification
 
     private func promptTouchID() {
-        guard state != .t4, touchIDFails < config.maxTouchIDAttempts else { riseTier4(); return }
         let ctx = LAContext()
-        // Sheet draws beneath our opaque T1 curtain — hidden by design.
-        // No timeout: the prompt persists until touched or unsealed,
-        // same indefinite posture as the T4 ritual.
+        ctx.localizedFallbackTitle = ""
+
+        // Pre-flight: a locked-out sensor fails evaluations instantly, which
+        // would burn the whole ladder in under a second. Detect it up front
+        // and collapse straight to the void — no fake failures logged.
+        var evalErr: NSError?
+        guard ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics,
+                                    error: &evalErr) else {
+            biometricsDown = true
+            Log.event("biometrics_unavailable", tier: tierNumber(),
+                      ["error": evalErr.flatMap { ($0 as? LAError)?.code }.map { "\($0)" } ?? "unknown"])
+            state = .t4
+            riseTier4()
+            return
+        }
+
         ctx.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics,
-                           localizedReason: "Verify ownership") { [weak self] ok, _ in
+                           localizedReason: "Verify ownership") { [weak self] ok, error in
             guard let self = self else { return }
             DispatchQueue.main.async {
                 if ok {
                     Log.event("owner_verified", tier: self.tierNumber(), ["method": "touchid"])
                     self.unseal(logEvent: "unlock")
                 } else {
-                    self.touchIDFails += 1
-                    Log.event("verify_failed", tier: self.tierNumber())
-                    // Escalate: t1 -> t2 -> t3 -> t4; stop asking Touch ID.
-                    switch self.state {
-                    case .t1: self.state = .t2
-                    case .t2: self.state = .t3
-                    default: self.state = .t4
+                    let code = (error as? LAError)?.code
+                    if code == .biometryLockout || code == .biometryNotAvailable {
+                        // Sensor died mid-cycle — same collapse, logged honestly.
+                        self.biometricsDown = true
+                        Log.event("biometrics_unavailable", tier: self.tierNumber(),
+                                  ["error": code.map { "\($0)" } ?? "unknown"])
+                        self.state = .t4
+                        self.riseTier4()
+                        return
                     }
-                    self.windowUp = false
-                    if self.state == .t4 || self.touchIDFails >= self.config.maxTouchIDAttempts {
+                    Log.event("verify_failed", tier: self.tierNumber(),
+                              ["error": code.map { "\($0)" } ?? "none"])
+                    self.touchIDFails += 1
+                    // Eager mid-cycle escalation: the operator is already
+                    // engaged, so repainting immediately IS the theater.
+                    switch self.state {
+                    case .t1:
+                        self.state = .t2
+                        self.riseTier2()
+                    case .t2:
+                        self.state = .t3
+                        self.riseTier3()
+                    default:
+                        self.state = .t4
                         self.riseTier4()
                     }
                 }
